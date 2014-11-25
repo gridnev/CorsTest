@@ -1,0 +1,190 @@
+[HttpPost] 
+        public HttpResponseMessage Post()
+        {
+            HttpResponseMessage result = null;
+            var httpRequest = HttpContext.Current.Request;
+
+            if (httpRequest.Files.Count == 1)
+            {
+                var postedFile = httpRequest.Files[0];
+                string token = Guid.NewGuid().ToString();
+                postedFile.SaveAs(
+                    HttpContext.Current.Server.MapPath(string.Format("~/App_Data/Documents/{0}_{1}", token,
+                        new FileInfo(postedFile.FileName).Name)));
+
+                result = Request.CreateResponse(HttpStatusCode.OK, token);
+            }
+            else
+            {
+                result = Request.CreateResponse(HttpStatusCode.BadRequest);
+            }
+
+            return result;
+        }
+
+        public HttpResponseMessage Get(string id)
+        {
+            HttpResponseMessage result = null;
+
+            DirectoryInfo directory = new DirectoryInfo(HttpContext.Current.Server.MapPath("~/App_Data/Documents"));
+            var files = directory.GetFiles(string.Format("{0}_*", id));
+            var localFilePath = HttpContext.Current.Server.MapPath("~/" + id);
+
+            if (String.IsNullOrEmpty(id))
+            {
+                result = Request.CreateResponse(HttpStatusCode.BadRequest);
+            }
+            else if (!files.Any())
+            {
+                result = Request.CreateResponse(HttpStatusCode.Gone);
+            }
+            else
+            {
+                result = Request.CreateResponse(HttpStatusCode.OK);
+                result.Content = new StreamContent(new FileStream(files[0].FullName, FileMode.Open, FileAccess.Read));
+                //result.Content.Headers.ContentLocation = new Uri(files[0].FullName);
+                result.Content.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment");
+                result.Content.Headers.ContentDisposition.FileName = files[0].Name.Replace(string.Format("{0}_", id),string.Empty);
+            }
+
+            return result;
+        }
+
+/// <reference path="../App.js" />
+
+(function () {
+    'use strict';
+
+    // The initialize function must be run each time a new page is loaded
+    Office.initialize = function (reason) {
+        var mailbox = Office.context.mailbox;
+
+        $(document).ready(function () {
+            app.initialize();
+
+            $('#set-subject').click(setSubject);
+            $('#get-subject').click(getSubject);
+            $('#add-to-recipients').click(addToRecipients);
+
+            $('#btnUploadFile').on('click', function() {
+                apiClient.UploadDocument($("#fileUpload").get(0).files, function(token) {
+                    $("#result").text("ok!");
+
+                        mailbox.item.addFileAttachmentAsync(
+                            apiClient.url + "/document/" + token,
+                            'test2.zip',
+                            { asyncContext: null },
+                            function(asyncResult) {
+                                if (asyncResult.status == Office.AsyncResultStatus.Failed) {
+                                   console.log(asyncResult.error.message);
+                                } else {
+
+                                }
+                            });
+
+
+                    },
+                    function(error) {
+                        $("#result").text("Fail!");
+                    });
+            });
+        });
+    };
+
+    function setSubject() {
+        Office.cast.item.toItemCompose(Office.context.mailbox.item).subject.setAsync("Hello world!");
+    }
+
+    function getSubject() {
+        Office.cast.item.toItemCompose(Office.context.mailbox.item).subject.getAsync(function (result) {
+            app.showNotification('The current subject is', result.value)
+        });
+    }
+
+    function addToRecipients() {
+        var item = Office.context.mailbox.item;
+        var addressToAdd = {
+            displayName: Office.context.mailbox.userProfile.displayName,
+            emailAddress: Office.context.mailbox.userProfile.emailAddress
+        };
+ 
+        if (item.itemType === Office.MailboxEnums.ItemType.Message) {
+            Office.cast.item.toMessageCompose(item).to.addAsync([addressToAdd]);
+        } else if (item.itemType === Office.MailboxEnums.ItemType.Appointment) {
+            Office.cast.item.toAppointmentCompose(item).requiredAttendees.addAsync([addressToAdd]);
+        }
+    }
+
+})();
+
+var apiClient;
+function Login() {
+    apiClient = new CryptoCloudApiClient("https://localhost:44307/api");
+
+    apiClient.Login("mobile1", "123456", function (token) {
+        $("#result").text(token);
+    },
+    function (error) {
+        $("#result").text("Fail!");
+    });
+}
+
+
+<button onclick="Login();">Login!</button>
+            <div id="result"></div>
+            
+            <div>
+                <label for="fileUpload">
+                    Select File to Upload:</label> <input id="fileUpload" type="file" />
+
+                    <input id="btnUploadFile" type="button" value="Upload File" />
+            </div>
+
+
+
+CryptoCloudApiClient = function (url) {
+    this.url = url;
+    this.token = null;
+};
+
+CryptoCloudApiClient.prototype = {
+    Login: function (login, password, success, error) {
+        $.ajax({
+            type: "POST",
+            url: this.url + "/Account",
+            data: JSON.stringify({ Login: login, Password: password }),
+            contentType: 'application/json; charset=utf-8',
+            dataType: 'json'
+        })
+        .error(function(e) {
+                return error(e);
+            })
+        .success(function (result) {
+            this.token = result;
+            return success(result);
+        });
+    },
+
+    UploadDocument: function(files, success, error) {
+            var data = new FormData();
+
+
+            if (files.length > 0) {
+                data.append("document", files[0]);
+            }
+
+            $.ajax({
+                type: "POST",
+                url: this.url + "/Document" + "?token=" + this.token,
+                data: data,
+                contentType: false,
+                processData: false,
+            })
+              .error(function (e) {
+                   return error(e);
+              })
+              .success(function (token) {
+                   return success(token);
+              });
+    },
+};
